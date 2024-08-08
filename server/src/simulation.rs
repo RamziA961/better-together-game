@@ -1,15 +1,17 @@
 use std::f32::consts::PI;
 
+use crate::updates::{Coordinates, InstructionUpdate, Orientation, SimulationUpdate, SpatialData};
 use anyhow::Result;
-use nalgebra::{vector, ComplexField, Vector3};
+use nalgebra::{vector, Vector3};
 use rapier3d::prelude::*;
-use serde::{Deserialize, Serialize};
 use tokio::{
     select,
     sync::{broadcast, mpsc},
     time,
 };
 use tracing::{error, info, instrument};
+
+pub mod instruction;
 
 // half extents
 const GROUND_DIM_HE: [f32; 3] = [40., 40., 0.1];
@@ -21,81 +23,32 @@ const PAWN_MASS: f32 = 20.;
 const MAX_ANGULAR_VEL: f32 = 2. * PI;
 const MAX_LINEAR_VEL: f32 = 10.;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicState {
-    pawn_pos: [f32; 3],
-    pawn_rot: [f32; 4],
+#[derive(Debug, Clone)]
+enum Action {
+    ApplyInstruction,
+    SendUpdate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SimulationUpdate {
-    PublicState(PublicState),
-    Done,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum Instruction {
-    Jump,
-    Left,
-    Right,
-    Up,
-    Down,
-    Cw,
-    Ccw,
-}
-
-impl Instruction {
-    fn apply(&self, rb: &mut RigidBody) {
-        let lin_vel = rb.linvel().norm();
-        let ang_vel = rb.angvel().norm().real();
-
-        match self {
-            Instruction::Up => {
-                let diff = MAX_LINEAR_VEL - lin_vel;
-
-                if diff >= 0. {
-                    rb.apply_impulse(vector![0., 0., diff.min(1.)], true);
-                }
-            }
-            Instruction::Down => {
-                let diff = -MAX_LINEAR_VEL - lin_vel;
-
-                if diff >= 0. {
-                    rb.apply_impulse(vector![0., 0., diff.min(-1.)], true);
-                }
-            }
-            Instruction::Jump => todo!(),
-            Instruction::Left => todo!(),
-            Instruction::Right => todo!(),
-            Instruction::Cw => todo!(),
-            Instruction::Ccw => todo!(),
-        }
-    }
-}
 
 pub struct Simulation {
     channel: broadcast::Sender<SimulationUpdate>,
-    update_interval: time::Interval,
-    instructions_channel: mpsc::Receiver<Instruction>,
-    instruction_interval: time::Interval,
+    update_interval: time::Duration,
+    instructions_channel: mpsc::Receiver<InstructionUpdate>,
+    instruction_interval: time::Duration,
 }
 
 impl Simulation {
     pub fn new(
         channel: broadcast::Sender<SimulationUpdate>,
         update_interval_ms: time::Duration,
-        instructions_channel: mpsc::Receiver<Instruction>,
+        instructions_channel: mpsc::Receiver<InstructionUpdate>,
         instruction_interval_ms: time::Duration,
-        
     ) -> Self {
-        let instruction_interval = time::interval(instruction_interval_ms);
-        let update_interval = time::interval(update_interval_ms);
         Self {
             channel,
-            update_interval,
+            update_interval: update_interval_ms,
             instructions_channel,
-            instruction_interval,
+            instruction_interval: instruction_interval_ms,
         }
     }
 
@@ -103,58 +56,82 @@ impl Simulation {
     pub async fn run(&mut self, ctx: &mut SimulationContext) -> Result<()> {
         let (mut r_set, mut c_set, pawn_handle) = Self::initialize_world();
         let mut phys_pipeline = PhysicsPipeline::new();
+    
+        let mut update_interval = time::interval(self.update_interval);
+        let mut ins_interval = time::interval(self.instruction_interval);
 
         for _i in 0..10000 {
-            //info!(step=_i);
             let res = select! {
-                instruction = self.pop_instruction() => instruction,
-                done = async {
-                    Self::step(&mut phys_pipeline, &mut r_set, &mut c_set, ctx);
-                    None
-                } => done,
+                biased;
+                _ = ins_interval.tick() => Some(Action::ApplyInstruction),
+                _ = update_interval.tick() => Some(Action::SendUpdate),
+                _ = async { Self::step(&mut phys_pipeline, &mut r_set, &mut c_set, ctx); } => None,
             };
 
             let body = &mut r_set[pawn_handle];
-
-            if let Some(instruction) = res {
-                instruction.apply(body);
-            }
-
             let trans = body.translation();
-            let rot = body.rotation();
 
             if trans.y < -2. {
                 break;
             }
-            
-            self.channel
-                .send(SimulationUpdate::PublicState(PublicState {
-                    pawn_pos: [trans.x, trans.y, trans.z],
-                    pawn_rot: [rot.i, rot.j, rot.k, rot.w],
-                }))
-                .map_err(|e| {
-                    error!(err=%e, "Failed to send simulation update.");
-                    e
-                })?;
 
-            //if _i % 20 == 0 {
-            //    info!("{:?}", body.position().translation.y);
-            //}
+            match res {
+                Some(Action::ApplyInstruction) => {
+                    if let Some(_ins) = self.instructions_channel.recv().await { }
+                    self.send_update(body)?;
+                },
+                Some(Action::SendUpdate) => {
+                    self.send_update(body)?;
+                },
+                _ => {}
+            }
         }
 
-        self.channel.send(SimulationUpdate::Done)?;
+        self.channel.send(SimulationUpdate {
+            spatial_updates: vec![],
+            done: Some(true),
+        })?;
+
         Ok(())
     }
 
-    #[instrument(skip_all)]
-    async fn pop_instruction(&mut self) -> Option<Instruction> {
-        //info!("Popping instruction");
-        self.instruction_interval.tick().await;
-        let out = self.instructions_channel.recv().await;
-        info!("Popped instruction: {out:?}");
-        out
+    fn send_update(&mut self, body: &mut RigidBody) -> Result<()> {
+        // takes a single body but want to support any number in future
+        let trans = body.translation();
+        let rot = body.rotation();
+
+        let coor = Coordinates {
+            x: trans.x,
+            y: trans.y,
+            z: trans.z,
+        };
+
+        let orient = Orientation {
+            i: rot.i,
+            j: rot.j,
+            k: rot.k,
+            w: rot.w,
+        };
+
+        let spatial_data = SpatialData {
+            id: 1,
+            coordinates: Some(coor),
+            orientation: Some(orient),
+        };
+
+        let sim_up = SimulationUpdate {
+            spatial_updates: vec![spatial_data],
+            done: None,
+        };
+
+        self.channel.send(sim_up)
+            .map(|_| ())
+            .map_err(|e| {
+                error!(err=%e, "Failed to send simulation update.");
+                anyhow::anyhow!(e)
+            })
     }
-    
+
     #[instrument(skip_all)]
     fn step(
         phys_pipeline: &mut PhysicsPipeline,
@@ -178,7 +155,7 @@ impl Simulation {
             &(),
         );
 
- //       info!("step complete");
+        //       info!("step complete");
     }
 
     fn initialize_world() -> (RigidBodySet, ColliderSet, RigidBodyHandle) {

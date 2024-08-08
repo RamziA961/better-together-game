@@ -5,7 +5,7 @@ function App(): React.ReactElement {
  
     return (
         <div id="app-main">
-            <GameCanvas/>
+            { /* <GameCanvas/> */}
         </div>
     );
 }

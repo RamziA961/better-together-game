@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "io.grpc.updates";
+option java_outer_classname = "UpdatesProto";
+
+package updates;
+
+message Coordinates {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+}
+
+message Orientation {
+    float i = 1;
+    float j = 2;
+    float k = 3;
+    float w = 4;
+}
+
+message SpatialData {
+    int32 id = 1;
+    Coordinates coordinates = 2;
+    Orientation orientation = 3;
+}
+
+message SimulationUpdate {
+    repeated SpatialData spatial_updates = 1;
+    optional bool done = 2;
+}
+
+enum Instruction {
+    Up = 0;
+    Down = 1;
+    Left = 2;
+    Right = 3;
+    Jump = 4;
+    Cw = 5;
+    Ccw = 6;
+}
+
+message InstructionUpdate {
+    Instruction instruction = 1;
+}
+
+message ChatMessage {
+    string userId = 1;
+    string chat = 2;
+}
+
+message BatchedChatMessages {
+    repeated ChatMessage chat = 1;
+}
+
+message GenericRequest {
+    bool ok = 1;
+}
+
+message GenericResponse {
+    bool ok = 1;
+}
+
+
+// Services should be bi-directional streams but grpc-web does not support
+// client and bi-directional streaming.
+service SimulationService {
+    rpc SubscribeToSimulation(GenericRequest) returns (stream SimulationUpdate);
+    rpc SendInstruction(InstructionUpdate) returns (GenericResponse);
+}
+
+service ChatService {
+    rpc SubscribeToChat(GenericRequest) returns (stream BatchedChatMessages);
+    rpc SendChat(ChatMessage) returns (GenericResponse);
+}
+
