@@ -7,7 +7,7 @@ use rapier3d::prelude::*;
 use tokio::{
     select,
     sync::{broadcast, mpsc},
-    time,
+    time::{self, MissedTickBehavior},
 };
 use tracing::{error, info, instrument};
 
@@ -28,7 +28,6 @@ enum Action {
     ApplyInstruction,
     SendUpdate,
 }
-
 
 pub struct Simulation {
     channel: broadcast::Sender<SimulationUpdate>,
@@ -56,37 +55,47 @@ impl Simulation {
     pub async fn run(&mut self, ctx: &mut SimulationContext) -> Result<()> {
         let (mut r_set, mut c_set, pawn_handle) = Self::initialize_world();
         let mut phys_pipeline = PhysicsPipeline::new();
-    
+
         let mut update_interval = time::interval(self.update_interval);
         let mut ins_interval = time::interval(self.instruction_interval);
 
-        for _i in 0..10000 {
+        for _i in 0.. {
             let res = select! {
                 biased;
+                _ = update_interval.tick() => {
+                    Self::step(&mut phys_pipeline, &mut r_set, &mut c_set, ctx);
+                    Some(Action::SendUpdate)
+                },
                 _ = ins_interval.tick() => Some(Action::ApplyInstruction),
-                _ = update_interval.tick() => Some(Action::SendUpdate),
-                _ = async { Self::step(&mut phys_pipeline, &mut r_set, &mut c_set, ctx); } => None,
             };
+
+            let should_log = false;
+            if should_log {
+                info!(step=_i, "Simulation loop ongoing");
+                info!(channel_size=self.channel.len());
+                info!("Action: {res:?}");
+            }
 
             let body = &mut r_set[pawn_handle];
             let trans = body.translation();
 
             if trans.y < -2. {
+                info!("breaking");
                 break;
             }
 
             match res {
                 Some(Action::ApplyInstruction) => {
-                    if let Some(_ins) = self.instructions_channel.recv().await { }
-                    self.send_update(body)?;
-                },
+                    self.send_update(body, should_log)?;
+                }
                 Some(Action::SendUpdate) => {
-                    self.send_update(body)?;
-                },
+                    self.send_update(body, should_log)?;
+                }
                 _ => {}
             }
         }
 
+        info!("Simulation loop complete");
         self.channel.send(SimulationUpdate {
             spatial_updates: vec![],
             done: Some(true),
@@ -94,8 +103,9 @@ impl Simulation {
 
         Ok(())
     }
-
-    fn send_update(&mut self, body: &mut RigidBody) -> Result<()> {
+    
+    #[instrument(skip_all)]
+    fn send_update(&mut self, body: &mut RigidBody, should_log: bool) -> Result<()> {
         // takes a single body but want to support any number in future
         let trans = body.translation();
         let rot = body.rotation();
@@ -123,13 +133,15 @@ impl Simulation {
             spatial_updates: vec![spatial_data],
             done: None,
         };
+        
+        if should_log {
+            info!(channel_len = self.channel.len(), "Sending update to simulation channel {sim_up:?}");
+        }
 
-        self.channel.send(sim_up)
-            .map(|_| ())
-            .map_err(|e| {
-                error!(err=%e, "Failed to send simulation update.");
-                anyhow::anyhow!(e)
-            })
+        self.channel.send(sim_up).map(|_| ()).map_err(|e| {
+            error!(err=%e, "Failed to send simulation update.");
+            anyhow::anyhow!(e)
+        })
     }
 
     #[instrument(skip_all)]
@@ -154,8 +166,6 @@ impl Simulation {
             &(),
             &(),
         );
-
-        //       info!("step complete");
     }
 
     fn initialize_world() -> (RigidBodySet, ColliderSet, RigidBodyHandle) {

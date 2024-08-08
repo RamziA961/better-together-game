@@ -1,25 +1,30 @@
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 
-use tokio::sync::{broadcast, mpsc};
+use tokio::{sync::{broadcast, mpsc}, time};
 use tokio_stream::{Stream, StreamExt};
 use tonic::{async_trait, Request, Response, Status};
+use tracing::{error, info, instrument};
 
-use crate::{simulation::instruction, updates::{
-    simulation_service_server::{SimulationService, SimulationServiceServer}, GenericRequest, GenericResponse, InstructionUpdate, SimulationUpdate
-}};
+use crate::{
+    simulation::instruction,
+    updates::{
+        simulation_service_server::{SimulationService, SimulationServiceServer},
+        GenericRequest, GenericResponse, InstructionUpdate, SimulationUpdate,
+    },
+};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SimulationUpdateService {
-    sim_tx: broadcast::Sender<SimulationUpdate>,
+    sim_rx: broadcast::Receiver<SimulationUpdate>,
     ins_tx: mpsc::Sender<InstructionUpdate>,
 }
 
 impl SimulationUpdateService {
     pub fn new(
-        sim_tx: broadcast::Sender<SimulationUpdate>,
+        sim_rx: broadcast::Receiver<SimulationUpdate>,
         ins_tx: mpsc::Sender<InstructionUpdate>,
     ) -> Self {
-        Self { sim_tx, ins_tx }
+        Self { sim_rx, ins_tx }
     }
 }
 
@@ -28,15 +33,16 @@ impl SimulationService for SimulationUpdateService {
     type SubscribeToSimulationStream =
         Pin<Box<dyn Stream<Item = Result<SimulationUpdate, Status>> + Send + Sync + 'static>>;
 
+    #[instrument(skip_all)]
     async fn subscribe_to_simulation(
         &self,
         request: Request<GenericRequest>,
     ) -> Result<Response<Self::SubscribeToSimulationStream>, Status> {
-        let mut _incoming = request.into_inner();
-        let mut sim_rx = self.sim_tx.subscribe();
+        info!("New subscriber");
+        let mut sim_rx1 = self.sim_rx.resubscribe();
 
         let outgoing = async_stream::try_stream! {
-            while let Ok(update) = sim_rx.recv().await {
+            while let Ok(update) = sim_rx1.recv().await {
                 yield update;
             }
         };
@@ -46,7 +52,7 @@ impl SimulationService for SimulationUpdateService {
 
     async fn send_instruction(
         &self,
-        instruction_req: Request<InstructionUpdate> 
+        instruction_req: Request<InstructionUpdate>,
     ) -> Result<Response<GenericResponse>, Status> {
         todo!();
     }

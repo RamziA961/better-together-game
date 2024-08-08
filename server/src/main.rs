@@ -6,11 +6,9 @@ use std::{
 use anyhow::Result;
 use service::simulation_service;
 use simulation::{Simulation, SimulationContext};
-use tokio::{
-    sync::{broadcast, mpsc},
-    time::interval,
-};
+use tokio::sync::{broadcast, mpsc};
 use tonic::transport::Server;
+use tower_http::cors;
 use tracing::{error, info};
 
 mod chat;
@@ -48,12 +46,18 @@ async fn main() -> Result<()> {
         sim.run(&mut SimulationContext::default()).await
     });
 
-    let sim_up_svc = simulation_service::SimulationUpdateService::new(sim_tx, ins_tx);
+    let sim_up_svc = simulation_service::SimulationUpdateService::new(sim_rx, ins_tx);
     let sim_up_server = SimulationServiceServer::new(sim_up_svc);
-    let server = Server::builder().add_service(sim_up_server).serve(addr);
+    
+    let cors = cors::CorsLayer::new()
+        .allow_origin(cors::Any);
+
+    let server = Server::builder()
+        .accept_http1(true)
+        .add_service(tonic_web::enable(sim_up_server))
+        .serve(addr);
 
     info!("Starting server at {addr}");
     tokio::join!(simulation_thread, server);
-
     Ok(())
 }
