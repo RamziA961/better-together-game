@@ -7,7 +7,7 @@ use rapier3d::prelude::*;
 use tokio::{
     select,
     sync::{broadcast, mpsc},
-    time::{self, MissedTickBehavior},
+    time,
 };
 use tracing::{error, info, instrument};
 
@@ -85,9 +85,9 @@ impl Simulation {
                 body.set_position(
                     Isometry::new(
                         Vector3::new(PAWN_START[0], PAWN_START[1], PAWN_START[2]),
-                        *body.position().rotation.axis_angle().unwrap().0
-                    ), 
-                    true
+                        *body.position().rotation.axis_angle().unwrap().0,
+                    ),
+                    true,
                 );
 
                 body.set_linvel(vector![0., 0., 0.], true);
@@ -183,11 +183,10 @@ impl Simulation {
     fn initialize_world() -> (RigidBodySet, ColliderSet, RigidBodyHandle) {
         let mut rigid_body_set = RigidBodySet::new();
         let mut collider_set = ColliderSet::new();
-        
+
         let ground_rb = RigidBodyBuilder::fixed().build();
-            let ground_handle = rigid_body_set.insert(ground_rb);
-        let ground =
-            ColliderBuilder::cuboid(GROUND_DIM_HE[0], GROUND_DIM_HE[1], GROUND_DIM_HE[2])
+        let ground_handle = rigid_body_set.insert(ground_rb);
+        let ground = ColliderBuilder::cuboid(GROUND_DIM_HE[0], GROUND_DIM_HE[1], GROUND_DIM_HE[2])
             .restitution(1.)
             .build();
 

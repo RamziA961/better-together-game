@@ -24,11 +24,11 @@ function App(): React.ReactElement {
                 baseUrl: "http://0.0.0.0:6969",
             });
             return new SimulationServiceClient(transport);
-    }, []);
+        }, []);
     
     React.useEffect(() => {
         const subscribe = async () => {
-            for await (let resp of simulationService.subscribeToSimulation({ ok: true }).responses) {
+            for await (const resp of simulationService.subscribeToSimulation({ ok: true }).responses) {
                 if (resp.spatialUpdates.length === 0) {
                     continue;
                 }
@@ -39,13 +39,13 @@ function App(): React.ReactElement {
                     setOrient(spatial.orientation);
                 }
             }
-        }
+        };
         subscribe();
     }, [simulationService]);
 
     return (
         <div id="app-main">
-           <GameCanvas coor={coor} orient={orient}/>
+            <GameCanvas coor={coor} orient={orient}/>
         </div>
     );
 }

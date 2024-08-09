@@ -16,7 +16,7 @@ export function GameCanvas(props: {
                 type: "orthographic",
             }}
         >
-        <OrbitControls />
+            <OrbitControls />
             <ambientLight/>
             <TestFloor/>
             <Test {...props}/>
