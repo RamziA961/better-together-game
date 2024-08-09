@@ -48,9 +48,8 @@ async fn main() -> Result<()> {
 
     let sim_up_svc = simulation_service::SimulationUpdateService::new(sim_rx, ins_tx);
     let sim_up_server = SimulationServiceServer::new(sim_up_svc);
-    
-    let cors = cors::CorsLayer::new()
-        .allow_origin(cors::Any);
+
+    let cors = cors::CorsLayer::new().allow_origin(cors::Any);
 
     let server = Server::builder()
         .accept_http1(true)

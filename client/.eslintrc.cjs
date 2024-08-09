@@ -19,6 +19,6 @@ module.exports = {
         "@stylistic/ts/semi": ["error", "always"],
         "@stylistic/ts/comma-spacing": ["error", { "before": false, "after": true }],
         "@stylistic/ts/comma-dangle": ["error", "always-multiline"],
-        "@stylistic/ts/quotes": ["error", "double", { "avoidEscape": true }]
+        "@stylistic/ts/quotes": ["error", "double", { "avoidEscape": true }],
     },
 }

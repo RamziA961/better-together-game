@@ -12,9 +12,10 @@ use tokio::{
 use tracing::{error, info, instrument};
 
 pub mod instruction;
+pub mod level;
 
 // half extents
-const GROUND_DIM_HE: [f32; 3] = [40., 40., 0.1];
+const GROUND_DIM_HE: [f32; 3] = [50., 0.05, 50.];
 
 const PAWN_DIM_HE: [f32; 3] = [5.; 3];
 const PAWN_START: [f32; 3] = [0., 20., 0.];
@@ -71,17 +72,25 @@ impl Simulation {
 
             let should_log = false;
             if should_log {
-                info!(step=_i, "Simulation loop ongoing");
-                info!(channel_size=self.channel.len());
+                info!(step = _i, "Simulation loop ongoing");
+                info!(channel_size = self.channel.len());
                 info!("Action: {res:?}");
             }
 
             let body = &mut r_set[pawn_handle];
             let trans = body.translation();
 
-            if trans.y < -2. {
-                info!("breaking");
-                break;
+            if trans.y < -10. {
+                //break;
+                body.set_position(
+                    Isometry::new(
+                        Vector3::new(PAWN_START[0], PAWN_START[1], PAWN_START[2]),
+                        *body.position().rotation.axis_angle().unwrap().0
+                    ), 
+                    true
+                );
+
+                body.set_linvel(vector![0., 0., 0.], true);
             }
 
             match res {
@@ -103,7 +112,7 @@ impl Simulation {
 
         Ok(())
     }
-    
+
     #[instrument(skip_all)]
     fn send_update(&mut self, body: &mut RigidBody, should_log: bool) -> Result<()> {
         // takes a single body but want to support any number in future
@@ -133,9 +142,12 @@ impl Simulation {
             spatial_updates: vec![spatial_data],
             done: None,
         };
-        
+
         if should_log {
-            info!(channel_len = self.channel.len(), "Sending update to simulation channel {sim_up:?}");
+            info!(
+                channel_len = self.channel.len(),
+                "Sending update to simulation channel {sim_up:?}"
+            );
         }
 
         self.channel.send(sim_up).map(|_| ()).map_err(|e| {
@@ -171,17 +183,24 @@ impl Simulation {
     fn initialize_world() -> (RigidBodySet, ColliderSet, RigidBodyHandle) {
         let mut rigid_body_set = RigidBodySet::new();
         let mut collider_set = ColliderSet::new();
-
+        
+        let ground_rb = RigidBodyBuilder::fixed().build();
+            let ground_handle = rigid_body_set.insert(ground_rb);
         let ground =
-            ColliderBuilder::cuboid(GROUND_DIM_HE[0], GROUND_DIM_HE[1], GROUND_DIM_HE[2]).build();
-        collider_set.insert(ground);
+            ColliderBuilder::cuboid(GROUND_DIM_HE[0], GROUND_DIM_HE[1], GROUND_DIM_HE[2])
+            .restitution(1.)
+            .build();
+
+        collider_set.insert_with_parent(ground, ground_handle, &mut rigid_body_set);
 
         let pawn_rigid_boy = RigidBodyBuilder::dynamic()
             .translation(vector![PAWN_START[0], PAWN_START[1], PAWN_START[2]])
+            .linear_damping(0.)
             .build();
         let pawn_handle = rigid_body_set.insert(pawn_rigid_boy);
         let pawn_collider = ColliderBuilder::cuboid(PAWN_DIM_HE[0], PAWN_DIM_HE[1], PAWN_DIM_HE[2])
             .mass(PAWN_MASS)
+            .restitution(1.)
             .build();
         collider_set.insert_with_parent(pawn_collider, pawn_handle, &mut rigid_body_set);
 
@@ -220,7 +239,7 @@ impl SimulationContext {
 impl Default for SimulationContext {
     fn default() -> Self {
         Self {
-            gravity: vector![0., 9.81, 0.],
+            gravity: vector![0., -9.81, 0.],
             integration_parameters: IntegrationParameters::default(),
             island_manager: IslandManager::new(),
             broad_phase: DefaultBroadPhase::new(),

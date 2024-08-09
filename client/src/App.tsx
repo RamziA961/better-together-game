@@ -3,7 +3,6 @@ import { GameCanvas } from "./components/game_canvas";
 import { SimulationServiceClient } from "./grpc-client/updates.client";
 import { GrpcWebFetchTransport } from "@protobuf-ts/grpcweb-transport";
 import { Coordinates, Orientation } from "./grpc-client/updates";
-import { Euler, Vector3 } from "three";
 
 function App(): React.ReactElement {
     const [coor, setCoor] = React.useState<Coordinates>({
